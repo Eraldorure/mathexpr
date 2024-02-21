@@ -3,7 +3,7 @@
 
 ## Important warning
 
-This library is NOT intended to be used in another program/code : this code wasn't written with speed and performances in mind, but practicality of use.
+This library is NOT intended to be used in another program/code : this code wasn't written with speed and performances in mind (I'm using Python), but practicality of use.
 It is made for quick calculations that you would do in a terminal for a math/physics project.
 
 Furthermore, it is very probably buggy as hell, so I thank you in advance for all bug reports and feature requests.
@@ -34,11 +34,13 @@ Here is a list of the features and their status:
   - Exponentiation and roots
   - Division
 - Functions
-  - Trigonometric and hyperbolic functions
+  - Trigonometric functions
+  - Hyperbolic functions
   - Logarithms
   - Exponential
   - Factorial
 - Series expansion
+- Limits
 
 ***
 ###### Copyright (C) Thibaud C. ([@Eraldorure](https://github.com/Eraldorure))

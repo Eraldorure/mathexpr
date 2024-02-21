@@ -1,22 +1,20 @@
 import string
 
 
-class UnorderedList(list):
-    """A quick little class that is made to be used as a list, but with the difference that it doesn't have any order."""
-
-    def __init__(self, *args):
-        super().__init__(args)
+class UnorderedTuple(tuple):
+    """A quick little class that is made to be used as a tuple (unmodifiable list), but with the difference that it
+    doesn't have any order, which has an effect on equality tests."""
 
     def __repr__(self):
-        return "UnorderedList(" + ", ".join(map(str, self)) + ")"
+        return "UnorderedTuple(" + ", ".join(map(str, self)) + ")"
 
     def __hash__(self):
-        return hash((UnorderedList, tuple(sorted(map(str, self)))))
+        return hash((UnorderedTuple, tuple(sorted(map(str, self)))))
 
-    def __eq__(self, other: list):
-        if isinstance(other, UnorderedList) and len(self) != len(other):
+    def __eq__(self, other: tuple):
+        if isinstance(other, UnorderedTuple) and len(self) != len(other):
             return False
-        other = other.copy()
+        other = list(other)
         for el in self:
             if el not in other:
                 return False
@@ -75,7 +73,7 @@ def lower_except_single_letters(txt: str) -> str:
 
 
 if __name__ == '__main__':
-    lst1 = UnorderedList(1, 2, 3, 4, 5)
-    lst2 = UnorderedList(5, 4, 3, 2, 1)
-    print(lst1, lst2, lst1 == lst2)
-    print(hash(lst1), hash(lst2), hash(lst1) == hash(lst2))
+    tup1 = UnorderedTuple((1, 2, 3, 4, 5))
+    tup2 = UnorderedTuple((5, 4, 3, 2, 1))
+    print(tup1, tup2, tup1 == tup2)
+    print(hash(tup1), hash(tup2), hash(tup1) == hash(tup2))

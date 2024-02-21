@@ -128,6 +128,10 @@ class _Common:
     def simplify(self):
         return self
 
+    @staticmethod
+    def score():
+        return 1
+
     neg = False
     ORDER = 0
 
@@ -330,17 +334,17 @@ class ImaginaryUnit(_Common):
 class Addition(_Common):
     def __init__(self, *args, neg: bool = False):
         self.num = 0
-        self.oper = UnorderedList()
+        self.oper = UnorderedTuple()
         self.neg = neg
         for el in args:
             el = convert_expr(el).simplify()
             if type(el) is Number:
                 self.num += el.val
             elif isinstance(el, Addition):
-                self.oper.extend(el.oper)
+                self.oper += el.oper
                 self.num += el.num
             else:
-                self.oper.append(el)
+                self.oper += UnorderedTuple((el,))
 
     def __repr__(self):
         res = f"{self.num}" if self.num else ""
@@ -379,27 +383,26 @@ class Addition(_Common):
             neg = el.neg
             el = -el if neg else el
             if isinstance(el, Multiplication):
-                for i in range(len(el.oper)):
-                    if el.oper[i] in amount:
-                        amount[el.oper[i]] += Multiplication(*el.oper[:i], *el.oper[i + 1:], el.num, neg=neg)
-                        break
-                    amount[el.oper[0]] = Multiplication(*el.oper[1:], el.num, neg=neg)
-            elif el not in amount:
-                amount[el] = 1 - 2 * neg
-            else:
+                if join := el.oper & amount.keys():
+                    key = join.pop()
+                    amount[key] += -el.remove_element(key) if neg else el.remove_element(key)
+                else:
+                    smallest = el.get_lowest_score()
+                    amount[smallest] = el.remove_element(smallest)
+            elif el in amount:
                 amount[el] += 1 - 2 * neg
+            else:
+                amount[el] = 1 - 2 * neg
         new = []
         for el, am in amount.items():
-            if am == 1:
-                new.append(el)
-            elif am == -1:
-                new.append(-el)
-            else:
-                new.append(am * el)
+            new.append(am * el)
         res = Addition(*new, self.num, neg=self.neg)
         if not res.oper:
             return Number(self.num)
         return res
+
+    def score(self):
+        return sum(el.score() for el in self.oper) + (self.num != 0)
 
     ORDER = 3
 
@@ -407,7 +410,7 @@ class Addition(_Common):
 class Multiplication(_Common):
     def __init__(self, *args, neg: bool = False):
         self.num = 1
-        self.oper = UnorderedList()
+        self.oper = UnorderedTuple()
         self.neg = neg
         for el in args:
             el = convert_expr(el).simplify()
@@ -418,9 +421,9 @@ class Multiplication(_Common):
                 self.num *= el.val
             elif isinstance(el, Multiplication):
                 self.num *= el.num
-                self.oper.extend(el.oper)
+                self.oper += el.oper
             else:
-                self.oper.append(el)
+                self.oper += UnorderedTuple((el,))
 
     def __repr__(self):
         var = ""
@@ -436,9 +439,9 @@ class Multiplication(_Common):
                 fn += f"{el}"
             else:
                 other += f" * {el}"
-        if var and fn and not add:
+        if var and fn:
             var += " * "
-        return f"{'-' if self.neg else ''}{self.num if self.num != 1 else ''}{var}{add}{fn}{other}"
+        return f"{'-' if self.neg else ''}{self.num if self.num != 1 else ''}{add}{var}{fn}{other}"
 
     def __hash__(self):
         return hash((Multiplication, self.num, tuple(self.oper), self.neg))
@@ -461,23 +464,41 @@ class Multiplication(_Common):
 
     def remove_element(self, element):
         if type(element) is Number:
-            return Multiplication(*self.oper)
-        return Multiplication(*[el for el in self.oper if el != element], self.num)
+            return Multiplication(*self.oper, self.num / element, neg=self.neg)
+        for i in range(len(self.oper)):
+            if self.oper[i] == element:
+                return Multiplication(*self.oper[:i], *self.oper[i + 1:], self.num, neg=self.neg)
+        return self
+
+    def get_lowest_score(self):
+        score = self.oper[0].score()
+        element = self.oper[0]
+        for el in self.oper[1:]:
+            if el.score() < score:
+                score = el.score()
+                element = el
+        return element
 
     def derivative(self, var: str):
         res = Number(0)
         for i in range(len(self.oper)):
-            res += Multiplication(*self.oper[:i], self.oper[i].derivative(var), *self.oper[i + 1:], neg=self.neg)
+            res += Multiplication(*self.oper[:i], self.oper[i].derivative(var), *self.oper[i + 1:], self.num, neg=self.neg)
         return res
 
     def simplify(self):
         if not self.num:
             return Number(0)
         elif len(self.oper) == 1 and self.num == 1:
-            return -self.oper.pop() if self.neg else self.oper.pop()
+            return -self.oper[0] if self.neg else self.oper[0]
         elif not self.oper:
             return Number(-self.num if self.neg else self.num)
         return self  # TODO: Complete once divisions and powers are implemented
+
+    def score(self):
+        res = 1
+        for el in self.oper:
+            res *= el.score()
+        return res
 
     ORDER = 2
 
@@ -513,13 +534,14 @@ class Factorial(_Common):
 
 
 VALID_TYPES = {eval(el) for el in dir() if el[0] != "_" and
-               type(eval(el)) not in {types.ModuleType, types.FunctionType}}  # - {Expression}
+               type(eval(el)) not in {types.ModuleType, types.FunctionType}} - {-1}  # - {Expression}
 
 FUNCTION_TYPES = {Exponential, NaturalLogarithm, SquareRoot}  # TODO : Complete as more functions are added
 
 
 if __name__ == '__main__':
-    val = Addition(Variable("u"), -Variable("v"), Variable("u"), -Variable("u") * Variable("v"))
+    val = 2 * Variable("x") * Pi() - 3 * EulerNumber() - Variable("x") * EulerNumber() + 2 + Pi()
     print("     Value |", val)
     print("Simplified |", val.simplify())
-    print("Derivative |", val.derivative("u"))
+    print("Derivative |", val.derivative("x"))
+    print("Simp. der. |", val.derivative("x").simplify())
