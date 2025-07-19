@@ -3,6 +3,7 @@
 import math
 import types
 import string
+import typing
 
 import _rules as r
 import _tools as t
@@ -75,8 +76,9 @@ def parse_expr(txt: str):
 # ---------------------------------------------------- # BASICS # ---------------------------------------------------- #
 
 
-class _Common:
-    """All default magic methods for all the expression types. All of them inherit directly or indirectly from this class."""
+class _MathObject:
+    """All default methods and attributes for the expression types. This class is made for inheritance purposes only,
+    and mustn't be instantiated."""
 
     def __ne__(self, other):
         return not self == other
@@ -113,10 +115,10 @@ class _Common:
         return Multiplication(other, self)
 
     def __truediv__(self, other):
-        return Multiplication(self, Exponentiation(other, -1))
+        return Multiplication(self, Exponentiation(-other if other.neg else other, -1, neg=other.neg))
 
     def __rtruediv__(self, other):
-        return Multiplication(other, Exponentiation(self, -1))
+        return Multiplication(other, Exponentiation(-self if self.neg else self, -1, neg=self.neg))
 
     def __pow__(self, other):
         return Exponentiation(self, other)
@@ -124,19 +126,18 @@ class _Common:
     def __rpow__(self, other):
         return Exponentiation(other, self)
 
+    def expand(self):
+        return self
+
     def simplify(self):
         return self
 
-    @staticmethod
-    def size():
-        return 1
-
     neg = False
-    SIMP = False
+    simp = False
     ORDER = 0
 
 
-class Number(_Common):
+class Number(_MathObject):
     """This class is used to represent a number, which is stored as a <_tools.Fraction> type."""
 
     def __init__(self, value: int | float | t.Fraction, *, neg: bool = False):
@@ -144,13 +145,13 @@ class Number(_Common):
             value = -value
         self.val = t.Fraction(value)
 
-    def __call__(self, var: dict[str, any]):
+    def __call__(self, var: dict[str, typing.Any]):
         return self
 
     def __repr__(self):
         num = -self.val.numerator if self.neg else self.val.numerator
         den = self.val.denominator
-        return ("-" if self.neg else "") + (str(num) if den == 1 else f"({num}/{den})")
+        return ("-" if self.neg else "") + (str(num) if den == 1 else f"{num}/{den}")
 
     def __hash__(self):
         return hash(self.val)
@@ -159,13 +160,10 @@ class Number(_Common):
         return Number(-self.val)
 
     def __eq__(self, other):
-        return self.val == other.val if isinstance(other, Number) else self.val == other
+        return self.val == (other.val if isinstance(other, Number) else other)
 
     def __lt__(self, other):
-        val_self = -self.val if self.neg else self.val
-        if isinstance(other, Number):
-            other = -other.val if other.neg else other.val
-        return val_self < other
+        return self.val < (other.val if isinstance(other, Number) else other)
 
     def __le__(self, other):
         return self < other or self == other
@@ -180,36 +178,36 @@ class Number(_Common):
     def derivative(_):
         return Number(0)
 
-    @staticmethod
-    def is_complex() -> bool:
-        return False
-
-    @staticmethod
-    def is_calculable() -> bool:
-        return True
+    def get_factors(self) -> dict:
+        return {Number(v): Number(p) for v, p in t.fraction_prime_factors(self.val).items()}
 
     @staticmethod
     def get_variables() -> set[str]:
         return set()
+
+    def is_integer(self):
+        return self.val.is_integer()
 
     @property
     def neg(self):
         return self.val < 0
 
 
-class Variable(_Common):
+class Variable(_MathObject):
     """A basic variable. It is represented by a single letter that isn't already used as a constant ("i" and "e" are
     disallowed). There is no way to specify whether a Variable object is a used as a constant or a true variable, as
     that depends solely on how the user uses it."""
     def __init__(self, name: str, *, neg: bool = False):
         ok, err = r.var_name_ok(name)
-        if not ok:
+        if not ok and not isinstance(self, _Constant):
             raise err
         self.name = name
         self.neg = neg
 
-    def __call__(self, var: dict[str, any]):
-        return convert_expr(var[self.name]) if self.name in var else self
+    def __call__(self, var: dict[str, typing.Any]):
+        if self.name in var:
+            return -convert_expr(var[self.name]) if self.neg else convert_expr(var[self.name])
+        return self
 
     def __repr__(self):
         return ("-" if self.neg else "") + self.name
@@ -226,13 +224,8 @@ class Variable(_Common):
     def derivative(self, var: str):
         return Number(1 - 2 * self.neg if var == self.name else 0)
 
-    @staticmethod
-    def is_complex() -> bool:
-        return False
-
-    @staticmethod
-    def is_calculable() -> bool:
-        return False
+    def get_factors(self) -> dict:
+        return {-self: Number(1), Number(-1): Number(1)} if self.neg else {self: Number(1)}
 
     def get_variables(self) -> set[str]:
         return {self.name}
@@ -241,15 +234,8 @@ class Variable(_Common):
 # -------------------------------------------------- # CONSTANTS # --------------------------------------------------- #
 
 
-class _Constant(Number):
+class _Constant(Variable):
     """The base class for mathematical constants."""
-
-    def __init__(self, value: int | float, name: str, *, neg: bool = False):
-        self.name = name
-        super().__init__(value, neg=neg)
-
-    def __repr__(self):
-        return ("-" if self.neg else "") + self.name
 
     def __hash__(self):
         return hash((_Constant, self.name, self.neg))
@@ -260,16 +246,18 @@ class _Constant(Number):
     def __ne__(self, other):
         return not isinstance(other, _Constant) or self.name != other.name or self.neg != other.neg
 
-    @staticmethod
-    def is_calculable() -> bool:
-        return False
+    def derivative(self, var: str):
+        return Number(0)
+
+    def get_variables(self) -> set[str]:
+        return set()
 
 
 class Pi(_Constant):
     """The pi constant, used primarily for angles and circles."""
 
     def __init__(self, *, neg: bool = False):
-        super().__init__(math.pi, "π", neg=neg)
+        super().__init__("π", neg=neg)
 
     def __neg__(self):
         return Pi(neg=not self.neg)
@@ -279,101 +267,76 @@ class EulerNumber(_Constant):
     """Euler's number, which is involved in the definition of the exponential function."""
 
     def __init__(self, *, neg: bool = False):
-        super().__init__(math.e, "e", neg=neg)
+        super().__init__("e", neg=neg)
 
     def __neg__(self):
         return EulerNumber(neg=not self.neg)
 
     def __pow__(self, other):
-        return Exponential(other, neg=self.neg)
+        return Exponential(other, neg=self.neg).simplify()
 
 
-class ImaginaryUnit(_Common):
+class ImaginaryUnit(_Constant):
     """This class is used to represent the imaginary unit, which is displayed as the letter "i" (and not "j", contrary
     to Python). It means that there is no complex number type, and that it will need to be made the good ol' way."""
 
     def __init__(self, *, neg: bool = False):
-        self.neg = neg
-
-    def __call__(self, var: dict[str, any]):
-        return self
-
-    def __repr__(self):
-        return "-i" if self.neg else "i"
-
-    def __hash__(self):
-        return hash((ImaginaryUnit, self.neg))
+        super().__init__("i", neg=neg)
 
     def __neg__(self):
         return ImaginaryUnit(neg=not self.neg)
 
     def __pow__(self, power):
-        return Exponential(Number(0.5) * ImaginaryUnit() * Pi() * power)
+        # i ** n = exp(i * n * pi / 2)
+        return Exponential(Multiplication(ImaginaryUnit(), Pi(), t.Fraction(1, 2), power)).simplify()
 
-    def __eq__(self, other):
-        return isinstance(other, ImaginaryUnit) and self.neg == other.neg
-
-    @staticmethod
-    def derivative(_):
-        return Number(0)
-
-    @staticmethod
-    def is_complex() -> bool:
-        return True
-
-    @staticmethod
-    def is_calculable() -> bool:
-        return False
-
-    @staticmethod
-    def get_variables() -> set[str]:
-        return set()
+    def get_factors(self) -> dict:
+        return {Number(-1): Number(0.5 + self.neg)}
 
 
 # -------------------------------------------------- # OPERATORS # --------------------------------------------------- #
 
 
-class Addition(_Common):
-    """A simple addition. It is also used for subtractions, as it is simply an addition with a negative object."""
+class Addition(_MathObject):
+    """A simple addition. It is also used for subtractions, as those are simply additions with a negative object."""
 
     def __init__(self, *operands, neg: bool = False, simp: bool = True):
-        self.num = 0
+        self.num = t.Fraction(0)
         self.oper = t.UnorderedTuple()
         for el in operands:
-            el = convert_expr(el)
-            if el.SIMP:
+            el = convert_expr(-el if neg else el)
+            if el.simp:
                 el = el.simplify()
-            if type(el) is Number:
+            if isinstance(el, Number):
                 self.num += el.val
             elif isinstance(el, Addition):
                 self.oper += el.oper
                 self.num += el.num
             else:
                 self.oper += t.UnorderedTuple((el,))
-        self.neg = neg
-        self.SIMP = simp
+        self.simp = simp
+
+    def __call__(self, var: dict[str, typing.Any]):
+        return Addition(*(el(var) for el in self.oper), self.num).simplify()
 
     def __repr__(self):
         res = ""
-        oper = self.oper + ((Number(self.num),) if self.num else ())
+        oper = self.oper + ((Number(self.num),) if self.num or not self.oper else ())
         for el in oper:
-            if not res:
-                res += f"-{repr(el)[1:]}" if el.neg else f"{el}"
-            else:
+            if res:
                 res += f" - {repr(el)[1:]}" if el.neg else f" + {el}"
+            else:
+                res += f"-{repr(el)[1:]}" if el.neg else f"{el}"
         return res
 
     def __hash__(self):
-        return hash((Addition, self.num, self.oper, self.neg))
+        return hash((Addition, self.num, self.oper))
 
     def __neg__(self):
-        return Addition(*[-el for el in self.oper], -self.num, neg=not self.neg)
+        return Addition(*(-el for el in self.oper), -self.num, simp=self.simp)
 
     def __eq__(self, other):
-        return isinstance(other, Addition) and self.oper == other.oper and self.num == other.num and self.neg == other.neg
-
-    def is_calculable(self) -> bool:
-        return all(el.is_calculable() for el in self.oper)
+        return isinstance(other, Addition) and self.oper == other.oper and self.num == other.num
 
     def get_variables(self) -> set[str]:
         res = set()
@@ -381,42 +344,103 @@ class Addition(_Common):
             res.update(el.get_variables())
         return res
 
+    def get_factors(self) -> dict:
+        return {self: Number(1)}
+
     def derivative(self, var: str):
-        return Addition(*[el.derivative(var) for el in self.oper], neg=self.neg)
+        return Addition(*(el.derivative(var) for el in self.oper), neg=self.neg)
+
+    # def expand(self):  # Useless because an Addition object is by definition already expanded
+    #     return Addition(*(el.expand() for el in self.oper), self.num, neg=self.neg)
 
     def simplify(self):
-        amount = {}
-        for el in self.oper:
-            neg = el.neg
-            el = -el if neg else el
-            if isinstance(el, Multiplication):
-                if join := el.oper & amount.keys():
-                    key = join.pop()
-                    amount[key] += -el.remove_element(key) if neg else el.remove_element(key)
+        obj = self
+        working = True
+        while working:  # loop because in some cases factorization requires multiple passes
+            # step 1: decomposing the addition into a dict containing bases and a decomposition of the powers
+            decompositions: dict[_MathObject, dict[_MathObject, dict[int, int | float | t.Fraction]]] = {}  # {base: {mul: {index: coef, ...}, ...}, ...}
+            # i.e.  e**(3+x) + 3*e**x  --->  {e: {1: {0: 3}, x: {0: 1, 1: 1}}, 3: {1: {1: 1}}}
+            if obj.num != 0:
+                factors = Number(obj.num).get_factors()
+                for base, power in factors.items():
+                    decompositions[base] = {Number(1): {-1: power}}  # special index -1 for num
+            for i in range(len(obj.oper)):
+                if isinstance(obj.oper[i], (Exponentiation, Multiplication)):
+                    factors = obj.oper[i].get_factors()
                 else:
-                    smallest = el.get_smallest_size()
-                    amount[smallest] = el.remove_element(smallest)
-            elif el in amount:
-                amount[el] += 1 - 2 * neg
+                    factors = {obj.oper[i]: Number(1)}
+                for base, power in factors.items():
+                    if isinstance(power, Addition):
+                        mul = {}
+                        if power.num != 0:
+                            mul[Number(1)] = {i: power.num}
+                        for el in power.oper:
+                            if isinstance(el, Multiplication):
+                                mul[Multiplication(*el.oper, neg=el.neg)] = {i: el.coef}
+                            else:
+                                mul[el] = {i: 1}
+                    elif isinstance(power, Multiplication):
+                        mul = {Multiplication(*power.oper, neg=power.neg): {i: power.coef}}
+                    elif isinstance(power, Number):
+                        mul = {Number(1, neg=power.neg): {i: abs(power.val)}}
+                    else:
+                        mul = {power: {i: 1}}
+                    if base.neg:
+                        base = -base
+                    if base in decompositions:
+                        for m in mul:
+                            if m in decompositions[base]:
+                                decompositions[base][m].update(mul[m])
+                            else:
+                                decompositions[base][m] = mul[m]
+                    else:
+                        decompositions[base] = mul
+            # step 2: creating groups indicating which terms can be factorized by what
+            groups: dict[_MathObject, set[int]] = {}  # {term: {index, ...}, ...}
+            for base, power in decompositions.items():
+                for mul, pos in power.items():
+                    indexes = set(pos.keys())
+                    if len(pos) < 2 or any(indexes & set(saved_indexes) not in (set(), indexes) for saved_indexes in groups.values()):
+                        continue  # need at least 2 elements to factorize + factorizations cannot overlap
+                    new_key = Exponentiation(base, mul * min(pos.values()))
+                    if related_keys := t.find_value_in_dict(indexes, groups):
+                        prev_key = related_keys.pop()
+                        groups[Multiplication(prev_key, new_key)] = groups.pop(prev_key)
+                    else:
+                        groups[new_key] = indexes
+            # step 3: constructing the new and simplified addition
+            if groups:
+                result = Addition()
+                remaining = list(range(-1, len(obj.oper)))
+                for factor, indexes in groups.items():
+                    tmp = Addition()
+                    for ind in indexes:
+                        if ind == -1:
+                            tmp += Number(obj.num) / factor
+                        else:
+                            tmp += obj.oper[ind] / factor
+                        remaining.remove(ind)
+                    result += factor * tmp
+                for ind in remaining:
+                    if ind == -1:
+                        result += obj.num
+                    else:
+                        result += obj.oper[ind]
+                obj = result
             else:
-                amount[el] = 1 - 2 * neg
-        new = []
-        for el, am in amount.items():
-            new.append(am * el)
-        res = Addition(*new, self.num, neg=self.neg)
-        if not res.oper:
-            return Number(self.num)
-        elif len(res.oper) == 1 and not res.num:
-            return -res.oper[0] if res.neg else res.oper[0]
-        return res
+                working = False  # no simplification available, terminate loop and return current obj
+            # step 4: checking whether the current addition is just a superfluous container
+            if len(obj.oper) == 1 and obj.num == 0:
+                return obj.oper[0]
+            elif not obj.oper:
+                return Number(obj.num)
+        return obj
 
-    def size(self):
-        return 1 + sum(el.size() for el in self.oper) + (self.num != 0)
-
+    neg = False
     ORDER = 3
 
 
-class Multiplication(_Common):
+class Multiplication(_MathObject):
     """The multiplication operator. It is also used for divisions, since the denominator is stored as an object to a
     negative power."""
 
@@ -425,67 +449,82 @@ class Multiplication(_Common):
         self.oper = t.UnorderedTuple()
         for el in operands:
             el = convert_expr(el)
-            if el.SIMP:
+            if el.simp:
                 el = el.simplify()
             if el.neg:
-                self.neg = not self.neg
+                neg = not neg
                 el = -el
-            if type(el) is Number:
+            if isinstance(el, Number):
                 self.coef *= el.val
-            elif type(el) is Exponentiation and type(el.base) is Number and type(el.power) is Number and el.power.val.is_integer():
-                self.coef *= el.base.val ** el.power.val
             elif isinstance(el, Multiplication):
                 self.coef *= el.coef
                 self.oper += el.oper
             else:
                 self.oper += t.UnorderedTuple((el,))
         self.neg = neg
-        self.SIMP = simp
+        self.simp = simp
 
-    def __repr__(self):  # I am deeply ashamed of this method
-        mul = {"add": "", "var": "", "fn": "", "other": "", "_count": 0}
-        div = {"add": "", "var": "", "fn": "", "other": "", "_count": 0}
-        for el in self.oper:
-            if isinstance(el, Exponentiation) and el.power.neg:
-                current = div
-                el = el.base if el.power == -1 else (el.base ** (-el.power)).simplify()
-            else:
-                current = mul
-            if isinstance(el, (Variable, ImaginaryUnit, _Constant)):
-                current["var"] += f"{el}"
-            elif isinstance(el, Addition):
-                current["add"] += f"({el})"
-            elif isinstance(el, tuple(FUNCTION_TYPES)):
-                current["fn"] += f"{el}"
-            else:
-                current["other"] += f" * {el}" if current["_count"] else f"{el}"
-            current["_count"] += 1
-        res = "-" if self.neg else ""
-        if mul["_count"]:
-            res += ((str(self.coef.numerator) if self.coef.numerator != 1 else "")
-                    + mul["add"] + mul["var"] + (" * " if mul["var"] and mul["fn"] else "") + mul["fn"] + mul["other"])
-        else:
-            res += str(self.coef.numerator)
-        if div["_count"]:
-            div_res = ((str(self.coef.denominator) if self.coef.denominator != 1 else "")
-                       + div["add"] + div["var"] + (" * " if div["var"] and div["fn"] else "") + div["fn"] + div["other"])
-            res += f" / ({div_res})" if div["_count"] > 1 or div["_count"] and self.coef.denominator != 1 else f" / {div_res}"
-        elif self.coef.denominator != 1:
-            res += f" / {self.coef.denominator}"
-        return res
+    def __call__(self, var: dict[str, typing.Any]):
+        return Multiplication(*(el(var) for el in self.oper), self.coef, neg=self.neg).simplify()
+
+    def __repr__(self):
+        def repr_single(mul: Multiplication, is_div: bool = False) -> str:
+            res = add = var = fn = other = ""
+            if mul.coef != 1:
+                res += str(mul.coef.numerator)
+            for el in mul.oper:
+                if isinstance(el, Addition):
+                    add += f"({el})"
+                elif isinstance(el, Variable):
+                    var += repr(el)
+                elif isinstance(el, tuple(FUNCTION_TYPES)):
+                    if fn:
+                        fn += " * "
+                    fn += repr(el)
+                else:
+                    if other:
+                        other += " * "
+                    other += repr(el)
+            res += add + var
+            if fn:
+                if var:
+                    res += " * "
+                res += fn
+            if other:
+                if res:
+                    res += " * "
+                res += other
+            elif not res:
+                res = "1"
+            if mul.neg:
+                res = "-" + res
+            return f"({res})" if is_div and (mul.coef == 1 and len(mul.oper) > 1 or mul.coef != 1 and len(mul.oper) > 0) else res
+
+        num, den = self.get_fraction()
+        if den.coef == 1 and len(den.oper) == 0:
+            return repr_single(num)
+        return repr_single(num) + " / " + repr_single(den, True)
 
     def __hash__(self):
         return hash((Multiplication, self.coef, tuple(self.oper), self.neg))
 
     def __neg__(self):
-        return Multiplication(*self.oper, self.coef, neg=not self.neg)
+        return Multiplication(*self.oper, self.coef, neg=not self.neg, simp=self.simp)
 
     def __eq__(self, other):
+        other = convert_expr(other)
         return (isinstance(other, Multiplication) and self.oper == other.oper
                 and self.coef == other.coef and self.neg == other.neg)
 
-    def is_calculable(self) -> bool:
-        return all(el.is_calculable() for el in self.oper)
+    def get_fraction(self):
+        num = [Number(self.coef.numerator)]
+        den = [Number(-1), Number(self.coef.denominator)] if self.coef < 0 else [Number(self.coef.denominator)]
+        for el in self.oper:
+            if isinstance(el, Exponentiation) and el.power.neg:
+                den.append(Exponentiation(el.base, -el.power, neg=el.neg))
+            else:
+                num.append(el)
+        return Multiplication(*num, neg=self.neg), Multiplication(*den)
 
     def get_variables(self) -> set[str]:
         res = set()
@@ -493,22 +532,22 @@ class Multiplication(_Common):
             res.update(el.get_variables())
         return res
 
+    def get_factors(self) -> dict:
+        factors = {Number(v): Number(p) for v, p in t.fraction_prime_factors(self.coef).items()}
+        for el in self.oper:
+            for v, p in el.get_factors().items():
+                factors[v] = (factors.get(v, Number(0)) + p).simplify()
+        if self.neg:
+            factors[Number(-1)] = (factors.get(Number(-1), Number(0)) + 1).simplify()
+        return factors
+
     def remove_element(self, element):
-        if type(element) is Number:
+        if isinstance(element, Number):
             return Multiplication(*self.oper, self.coef / element, neg=self.neg)
         for i in range(len(self.oper)):
             if self.oper[i] == element:
                 return Multiplication(*self.oper[:i], *self.oper[i + 1:], self.coef, neg=self.neg)
         return self
-
-    def get_smallest_size(self):
-        size = self.oper[0].size()
-        element = self.oper[0]
-        for el in self.oper[1:]:
-            if el.size() < size:
-                size = el.size()
-                element = el
-        return element
 
     def derivative(self, var: str):
         res = Number(0)
@@ -516,9 +555,21 @@ class Multiplication(_Common):
             res += Multiplication(*self.oper[:i], self.oper[i].derivative(var), *self.oper[i + 1:], self.coef, neg=self.neg)
         return res
 
+    def expand(self):
+        add = []
+        others = [Number(self.coef).expand()]
+        for el in self.oper:
+            if isinstance(el, Addition):
+                add.append(el)  # .expand() not necessary because Addition.expand(self) -> self
+            else:
+                others.append(el.expand())
+        res = Multiplication(*others, neg=self.neg)
+        for el in add:
+            res = Addition(*(res * el_el for el_el in el.oper), res * el.num, neg=res.neg)
+        return res
+
     def simplify(self):
-        powers = {Number(v): (False, p) for v, p in t.prime_factors(self.coef.numerator).items()}
-        powers.update({Number(v): (False, -p) for v, p in t.prime_factors(self.coef.denominator).items()})
+        powers = {Number(v): (False, p) for v, p in t.fraction_prime_factors(self.coef).items()}
         for el in self.oper:
             if isinstance(el, Exponentiation):
                 if el.base in powers:
@@ -527,44 +578,42 @@ class Multiplication(_Common):
                     powers[el.base] = el.neg, el.power
             else:
                 powers[el] = ((powers[el][0] != el.neg), powers[el][1] + 1) if el in powers else (False, 1)
-        new = Multiplication(neg=self.neg)
+        tmp_oper = []
         for el, info in powers.items():
             if el == 0:
                 return Number(0)
             if info[1] == 1:
-                new *= -el if info[0] else el
+                tmp_oper.append(-el if info[0] else el)
             elif info[1] != 0:
-                new *= Exponentiation(el, info[1], neg=info[0])
+                tmp_oper.append(Exponentiation(el, info[1], neg=info[0]))
+        new = Multiplication(*tmp_oper, neg=self.neg)
         if len(new.oper) == 1 and new.coef == 1:
             return -new.oper[0] if new.neg else new.oper[0]
         elif not new.oper:
             return Number(new.coef, neg=new.neg)
         return new
 
-    def size(self):
-        return 1 + sum(el.size() for el in self.oper) + (self.coef != 1)
-
     ORDER = 2
 
 
-class Exponentiation(_Common):
-    """The class that represents the exponentiation operator, which is used to raise a something to a power."""
+class Exponentiation(_MathObject):
+    """The class that represents the exponentiation operator, which is used to raise something to a power."""
 
     def __init__(self, base, power, *, neg: bool = False, simp: bool = True):
+        self.base = convert_expr(base)
+        if self.base.simp:
+            self.base = self.base.simplify()
         self.power = convert_expr(power)
-        if self.power.SIMP:
-            self.power = self.power.simplify()
-        self.base = convert_expr(base).simplify()
-        if self.power.SIMP:
+        if self.power.simp:
             self.power = self.power.simplify()
         if isinstance(self.base, Exponentiation):
             self.power = (self.power * self.base.power).simplify()
             self.base = self.base.base
         self.neg = neg
-        self.SIMP = simp
+        self.simp = simp
 
-    def __call__(self, var: dict[str, any]):
-        return Exponentiation(self.base(var), self.power(var), neg=self.neg)
+    def __call__(self, var: dict[str, typing.Any]):
+        return Exponentiation(self.base(var), self.power(var), neg=self.neg).simplify()
 
     def __repr__(self):
         base = repr(self.base)
@@ -579,30 +628,47 @@ class Exponentiation(_Common):
         return hash((Exponentiation, self.base, self.power, self.neg))
 
     def __neg__(self):
-        return Exponentiation(self.base, self.power, neg=not self.neg)
+        return Exponentiation(self.base, self.power, neg=not self.neg, simp=self.simp)
+
+    def get_variables(self) -> set[str]:
+        return self.base.get_variables() | self.power.get_variables()
+
+    def get_factors(self) -> dict:
+        fact = {v: (p * self.power).simplify() for v, p in self.base.get_factors().items()}
+        if self.neg:
+            fact[Number(-1)] = (fact.get(Number(-1), Number(0)) + 1).simplify()
+        return fact
 
     def derivative(self, var: str):
         return self.base.derivative(var) * self.power * self.base ** (self.power - 1) + \
             self.power.derivative(var) * NaturalLogarithm(self.base) * self.base ** self.power
+
+    def expand(self):
+        if isinstance(self.base, Multiplication):
+            return Multiplication(*(Exponentiation(el, self.power, simp=False).expand() for el in self.base.oper), neg=self.neg)
+        elif isinstance(self.power, Number) and self.power.is_integer() and self.power > 1:
+            return Multiplication(*(self.base for _ in range(int(self.power.val))), neg=self.neg)
+        return Exponentiation(self.base.expand(), self.power.expand(), neg=self.neg)
 
     def simplify(self):
         if self.power == 0:
             return Number(1, neg=self.neg)
         elif self.power == 1:
             return -self.base if self.neg else self.base
+        elif self.base == 1:
+            return Number(1, neg=self.neg)
+        elif isinstance(self.base, (EulerNumber, ImaginaryUnit)):
+            return -(self.base ** self.power) if self.neg else self.base ** self.power
         elif self.power == 0.5:
             return SquareRoot(self.base, neg=self.neg).simplify()
         elif isinstance(self.base, Multiplication):
             if self.base.coef != 1 and self.power != -0.5:
                 return Exponentiation(Multiplication(*self.base.oper), self.power, neg=self.neg) * Number(self.base.coef) ** self.power
             elif self.power == -1:
-                return Multiplication(*[Exponentiation(el, -1, simp=False) for el in self.base.oper], neg=self.neg)
-        elif type(self.base) is Number and type(self.power) is Number and (res := self.base.val ** self.power.val).is_integer():
-            return Number(res, neg=self.neg)
+                return Multiplication(*(Exponentiation(el, -1, simp=False) for el in self.base.oper), neg=self.neg)
+        elif isinstance(self.base, Number) and isinstance(self.power, Number) and self.power.val.is_integer():
+            return Number(self.base.val ** self.power.val, neg=self.neg)
         return self
-
-    def size(self):
-        return 1 + self.base.size() + self.power.size()
 
     ORDER = 1
 
@@ -611,7 +677,7 @@ class Exponentiation(_Common):
 
 
 class Exponential(Exponentiation):
-    """The class that represents the exponential function, which is equivalent to (e ** x)."""
+    """The class that represents the exponential function (exp(x)), which is equivalent to (e ** x)."""
 
     def __init__(self, expression, *, neg: bool = False, simp: bool = True):
         super().__init__(EulerNumber(), expression, neg=neg, simp=simp)
@@ -620,7 +686,7 @@ class Exponential(Exponentiation):
         return f"{'-' if self.neg else ''}exp({self.power})"
 
     def __neg__(self):
-        return Exponential(self.power, neg=not self.neg)
+        return Exponential(self.power, neg=not self.neg, simp=self.simp)
 
     def derivative(self, var: str):
         return self.power.derivative(var) * Exponential(self.power)
@@ -634,26 +700,32 @@ class Exponential(Exponentiation):
             return self.power.expr
         elif isinstance(self.power, Multiplication) and self.power.oper == t.UnorderedTuple((Pi(), ImaginaryUnit())):
             num = (-self.power.coef if self.power.neg else self.power.coef) % 2
-            answers = {0: Number(1), 0.5: ImaginaryUnit(), 1: Number(-1), 1.5: -ImaginaryUnit()}
+            answers = {
+                t.Fraction(0): Number(1),
+                t.Fraction(1, 2): ImaginaryUnit(),
+                t.Fraction(1): Number(-1),
+                t.Fraction(3, 2): -ImaginaryUnit()
+            }
             if num in answers:
                 return -answers[num] if self.neg else answers[num]
         return self
 
-    def size(self):
-        return 1 + self.power.size()
-
     ORDER = 0
 
 
-class NaturalLogarithm(_Common):
-    """The class that represents the natural logarithm function. It is the opposite of the exponential function."""
+class NaturalLogarithm(_MathObject):
+    """The class that represents the natural logarithm function (ln(x)). It is the opposite of the exponential function,
+    which means that (exp(ln(x)) = ln(exp(x)) = x)."""
 
     def __init__(self, expression, *, neg: bool = False, simp: bool = True):
         self.expr = convert_expr(expression)
-        if self.expr.SIMP:
+        if self.expr.simp:
             self.expr = self.expr.simplify()
         self.neg = neg
-        self.SIMP = simp
+        self.simp = simp
+
+    def __call__(self, var: dict[str, typing.Any]):
+        return NaturalLogarithm(self.expr(var), neg=self.neg).simplify()
 
     def __repr__(self):
         return f"{'-' if self.neg else ''}ln({self.expr})"
@@ -662,10 +734,19 @@ class NaturalLogarithm(_Common):
         return hash((NaturalLogarithm, self.expr, self.neg))
 
     def __neg__(self):
-        return NaturalLogarithm(self.expr, neg=not self.neg)
+        return NaturalLogarithm(self.expr, neg=not self.neg, simp=self.simp)
+
+    def get_variables(self) -> set[str]:
+        return self.expr.get_variables()
+
+    def get_factors(self) -> dict:
+        return {self: Number(1)} if self.neg else {-self: Number(1), Number(-1): Number(1)}
 
     def derivative(self, var: str):
         return (-1 if self.neg else 1) * self.expr.derivative(var) / self.expr
+
+    def expand(self):
+        return NaturalLogarithm(self.expr.expand(), neg=self.neg)
 
     def simplify(self):
         if self.expr == 1:
@@ -674,14 +755,11 @@ class NaturalLogarithm(_Common):
             return Number(1)
         elif isinstance(self.expr, Exponential):
             return self.expr.power
-        elif isinstance(self.expr, Multiplication):  # Keep? Because it's true only in certain cases (when all elements are positive)
-            return Addition(*[NaturalLogarithm(el) for el in self.expr.oper + (self.expr.coef,)], neg=self.neg)
-        elif isinstance(self.expr, Exponentiation):  # Keep? Because it's true only in certain cases (when the base is positive)
-            return self.expr.power * NaturalLogarithm(self.expr.base, neg=self.neg)
+        # elif isinstance(self.expr, Multiplication):  # Keep? Because it's true only in certain cases (when all elements are positive)
+        #     return Addition(*(NaturalLogarithm(el) for el in self.expr.oper + (self.expr.coef,)), neg=self.neg)
+        # elif isinstance(self.expr, Exponentiation):  # Keep? Because it's true only in certain cases (when the base is positive)
+        #     return self.expr.power * NaturalLogarithm(self.expr.base, neg=self.neg)
         return self
-
-    def size(self):
-        return 1 + self.expr.size()
 
 
 class SquareRoot(Exponentiation):
@@ -694,55 +772,64 @@ class SquareRoot(Exponentiation):
         return f"{'-' if self.neg else ''}sqrt({self.base})"
 
     def derivative(self, var: str):
-        return self.base.derivative(var) / (2 * SquareRoot(self.base))
+        return self.base.derivative(var) / (2 * SquareRoot(self.base, neg=self.neg))
 
     def simplify(self):
         if self.power != 0.5:
             return Exponentiation(self.base, self.power, neg=self.neg).simplify()
         elif self.base == 0:
             return Number(0)
-        elif self.base == 1:
-            return Number(-1 if self.neg else 1)
-        elif type(self.base) is Number and (res := math.sqrt(self.base.val)).is_integer():
-            return Number(res, neg=self.neg)
+        elif isinstance(self.base, Number):
+            if self.base.neg:
+                value = -self.base.val
+                mul = ImaginaryUnit()
+            else:
+                value = self.base.val
+                mul = 1
+            if (res := math.sqrt(value)).is_integer():
+                return Multiplication(mul, res, neg=self.neg)
+            return Multiplication(mul, SquareRoot(value, simp=False), neg=self.neg)
         elif isinstance(self.base, Multiplication):
-            keep = []
-            remove = []
+            inside = []
+            outside = []
             for el in self.base.oper:
                 if isinstance(el, Exponentiation):
-                    remove.append(SquareRoot(el))
+                    outside.append(SquareRoot(el))
                 else:
-                    keep.append(el)
+                    inside.append(el)
             if (res := math.sqrt(self.base.coef)).is_integer():
-                return Multiplication(*remove, Number(res), SquareRoot(Multiplication(*keep), simp=False), neg=self.neg)
-            return Multiplication(*remove, SquareRoot(Multiplication(*keep, self.base.coef), simp=False), neg=self.neg)
+                outside.append(res)
+            else:
+                outside.append(self.base.coef)
+            tmp = SquareRoot(Multiplication(*inside), simp=False)
+            return Multiplication(*outside, (1 if tmp.base == 1 else tmp), neg=self.neg)
         return self
 
-    def size(self):
-        return 1 + self.base.size()
-
     ORDER = 0
-
-
-class Factorial(_Common):
-    pass  # TODO
 
 
 # ----------------------------------------------------- # SETS # ----------------------------------------------------- #
 
 
 VALID_TYPES = {eval(el) for el in dir()
-               if el[0] != "_" and type(eval(el)) not in {types.ModuleType, types.FunctionType}}  # - {Expression}
+               if el[0] != "_" and type(eval(el)) not in {types.ModuleType, types.FunctionType}}
 
-FUNCTION_TYPES = {Exponential, NaturalLogarithm, SquareRoot}  # Complete as more functions are added
+FUNCTION_TYPES = {Exponential, NaturalLogarithm, SquareRoot}
 
 
 if __name__ == '__main__':
-    val = (2 * Variable("x") ** 2 + 4 * Variable("x")) / Variable("x") + 1  # TODO: Find a way to better factorize additions
+    val = 1 + (2 * Variable("x") ** 2 + 6 * Variable("x") - 2 * Variable("x")) / Variable("x")
+    # val = parse_expr("3*x + 3*y + 3*z - 3")
+    # val = ImaginaryUnit() ** 2
     print("     Value |", val)
+    print("   Factors |", val.get_factors())
     val_simp = val.simplify()
     print("Simplified |", val_simp)
-    der = val_simp.derivative("x")
-    print("Derivative |", der)
-    der_simp = der.simplify()
-    print("Simp. der. |", der_simp)
+    print("Simplif. 2 |", val_simp.simplify())
+    val_exp = val.expand()
+    print("  Expanded |", val_exp)
+    print("Exp + simp |", val_exp.simplify())
+    # der = val_simp.derivative("x")
+    # print("Derivative |", der)
+    # print(" Der. exp. |", der.expand())
+    # print("Der. simp. |", der.simplify())

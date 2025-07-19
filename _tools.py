@@ -1,6 +1,6 @@
 import string
 import math
-from typing import Self
+from typing import Self, Any
 
 
 class UnorderedTuple(tuple):
@@ -39,7 +39,7 @@ class Fraction:
         elif not isinstance(denominator, (float, int)):
             raise TypeError(f"the denominator must be an int or a float (not {type(denominator).__name__})")
         elif denominator == 0:
-            raise ValueError("the denominator cannot be 0")
+            raise ZeroDivisionError("the denominator cannot be 0")
 
         if isinstance(numerator, Fraction) and denominator == 1:
             self.numerator, self.denominator = numerator.numerator, numerator.denominator
@@ -124,7 +124,8 @@ class Fraction:
         return self - other
 
     def __neg__(self):
-        return Fraction(-self.numerator, self.denominator)
+        return Fraction(-self.numerator,
+                        self.denominator)
 
     def __mul__(self, other):
         if not isinstance(other, Fraction):
@@ -145,30 +146,18 @@ class Fraction:
         return Fraction(other) / self
 
     def __floordiv__(self, other):
-        if other < 0:
-            raise ValueError("impossible to divide by a negative number yet")  # TODO: Implement it
-        new = Fraction(self.numerator, self.denominator)
-        times = Fraction(0)
-        while new < 0:
-            new += other
-            times -= 1
-        while new > other:
-            new -= other
-            times += 1
-        return times
+        if not isinstance(other, Fraction):
+            other = Fraction(other)
+        return Fraction((self.numerator * other.denominator) // (self.denominator * other.numerator))
 
     def __rfloordiv__(self, other):
         return Fraction(other) // self
 
     def __mod__(self, other):
-        new = Fraction(self.numerator, self.denominator)
-        if other < 0:
-            raise ValueError("the modulo must be positive")  # TODO: Implement it too
-        while new < 0:
-            new += other
-        while new > other:
-            new -= other
-        return new
+        if not isinstance(other, Fraction):
+            other = Fraction(other)
+        return Fraction((self.numerator * other.denominator) % (self.denominator * other.numerator),
+                        self.denominator * other.denominator)
 
     def __rmod__(self, other):
         return Fraction(other) % self
@@ -247,10 +236,16 @@ def lower_except_single_letters(txt: str) -> str:
 
 
 def prime_factors(n: int) -> dict[int, int]:
-    """This function returns a dict containing all the prime factors and their power of a given number."""
+    """This function returns a dict containing all the prime factors and their power of a given number.
+    If the given number is negative, the function will return the factors of the absolute value of the number, but with
+    an added factor of -1."""
+
     if n == 0:
         return {0: 1}
     factors = {}
+    if n < 0:
+        n = -n
+        factors[-1] = 1
     i = 2
     while i * i <= n:
         if n % i:
@@ -263,9 +258,31 @@ def prime_factors(n: int) -> dict[int, int]:
     return factors
 
 
+def fraction_prime_factors(fract: Fraction) -> dict[int, int]:
+    """This function returns a dict containing all the prime factors and their power of a given number.
+    As it is made for fractions, it returns in the same dict the factors of the numerator and the denominator, with the
+    difference that the factors of the denominator are subtracted from the factors of the numerator."""
+
+    factors = prime_factors(fract.numerator)
+    for v, p in prime_factors(fract.denominator).items():
+        factors[v] = factors.get(v, 0) - p
+        if factors[v] == 0:
+            del factors[v]
+    return factors
+
+
+def find_value_in_dict[K, V](value: V, dictionary: dict[K, V]) -> set[K]:
+    """This function searches for matching occurrences of a given value in a dict, and returns a set containing the keys
+    associated with this value."""
+    result = set()
+    for key, val in dictionary.items():
+        if val == value:
+            result.add(key)
+    return result
+
+
 if __name__ == '__main__':
-    test = prime_factors(28)
-    res = 1
-    for v, p in test.items():
-        res *= v ** -p
-    print(test, res == 1/28)
+    # dct1 = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+    # dct2 = {4: "quatre", 5: "cinq", 6: "six", 7: "sept", 8: "huit"}
+    # print(dict_intersection(dct1, dct2))
+    print(Fraction(1, 1) == 1, Fraction(1, 1) != 1)

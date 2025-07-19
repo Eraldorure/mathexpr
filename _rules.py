@@ -28,7 +28,7 @@ def var_name_ok(name: str) -> tuple[bool, Exception]:
         err = ValueError("variable names must be a single letter")
     elif name not in string.ascii_letters:
         err = ValueError(f"a variable name must be a letter, not a symbol nor a numeric character (not '{name}')")
-    elif name in "ie":
+    elif name in "ieπ":
         err = ValueError(f"a variable cannot be named '{name}', for it is a reserved letter")
     else:
         return True, NoError()
